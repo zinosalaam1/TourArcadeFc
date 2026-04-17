@@ -4,9 +4,7 @@ import { Lock, Eye, EyeOff, AlertCircle, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
-// IMPORTANT: For production, replace this with Supabase Auth
-// See SUPABASE_INTEGRATION_GUIDE.md for proper authentication setup
-const ADMIN_PASSWORD = "tourarcade2026"; // Change this in production!
+const ADMIN_PASSWORD = "tourarcade2026"; 
 
 export function AdminLogin() {
   const [password, setPassword] = useState("");

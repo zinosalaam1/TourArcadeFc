@@ -27,3 +27,29 @@ export interface Registration {
   payment_reference: string | null;
   amount: number;
 }
+
+export async function getCachedTournament(id: string) {
+  const cacheKey = `tournament-${id}`;
+  const cached = sessionStorage.getItem(cacheKey);
+  
+  if (cached) {
+    const { data, timestamp } = JSON.parse(cached);
+    // Cache for 5 seconds
+    if (Date.now() - timestamp < 5000) {
+      return data;
+    }
+  }
+  
+  const { data } = await supabase
+    .from('tournaments')
+    .select('*')
+    .eq('id', id)
+    .single();
+  
+  sessionStorage.setItem(cacheKey, JSON.stringify({
+    data,
+    timestamp: Date.now(),
+  }));
+  
+  return data;
+}
