@@ -1,157 +1,123 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "motion/react";
-import {
-  ArrowLeft,
-  UserPlus,
-  Trash2,
-  CheckCircle,
-  Clock,
-  RefreshCw,
-  Lock,
-  Unlock,
-  Gamepad2,
-  LogOut,
-} from "lucide-react";
+import { ArrowLeft, UserPlus, Trash2, CheckCircle, Clock, RefreshCw, Lock, Unlock, Gamepad2, LogOut } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
+import { useTournamentSubscription } from "../../hooks/useTournamentSubscription";
+import { addPlayerAsAdmin, removePlayerAsAdmin, updateTournamentSettings, logoutAdmin } from "../../services/admin";
+import { confirmPayment } from "../../services/tournament";
 
-interface Registration {
-  id: string;
-  playerName: string;
-  phoneNumber: string;
-  paymentStatus: "pending" | "confirmed";
-  createdAt: number;
-  expiresAt: number;
-}
-
-interface TournamentData {
-  id: string;
-  name: string;
-  maxPlayers: number;
-  currentPlayers: number;
-  status: "open" | "full" | "closed";
-  registrations: Registration[];
-}
-
-const STORAGE_KEY = "tournament_data";
+const TOURNAMENT_ID = import.meta.env.VITE_TOURNAMENT_ID || "1";
 
 export function AdminPanel() {
   const navigate = useNavigate();
-  const [tournament, setTournament] = useState<TournamentData>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    return {
-      id: "1",
-      name: "FC 26 TOURNAMENT",
-      maxPlayers: 32,
-      currentPlayers: 0,
-      status: "open",
-      registrations: [],
-    };
-  });
-
-  const [newMaxPlayers, setNewMaxPlayers] = useState(tournament.maxPlayers);
+  const { tournament, registrations } = useTournamentSubscription(TOURNAMENT_ID);
+  const [newMaxPlayers, setNewMaxPlayers] = useState<number>(32);
   const [newPlayerName, setNewPlayerName] = useState("");
   const [newPlayerPhone, setNewPlayerPhone] = useState("");
+  const [isWorking, setIsWorking] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tournament));
-  }, [tournament]);
+    if (tournament) setNewMaxPlayers(tournament.max_players);
+  }, [tournament?.max_players]);
 
-  const handleAddPlayer = () => {
+  const handleAddPlayer = async () => {
     if (!newPlayerName.trim() || !newPlayerPhone.trim()) {
       toast.error("Please enter both name and phone number");
       return;
     }
-
-    const now = Date.now();
-    const newReg: Registration = {
-      id: `admin-${Date.now()}`,
-      playerName: newPlayerName,
-      phoneNumber: newPlayerPhone,
-      paymentStatus: "confirmed",
-      createdAt: now,
-      expiresAt: now + 10 * 60 * 1000,
-    };
-
-    const newCurrentPlayers = tournament.currentPlayers + 1;
-    setTournament({
-      ...tournament,
-      registrations: [...tournament.registrations, newReg],
-      currentPlayers: newCurrentPlayers,
-      status: newCurrentPlayers >= tournament.maxPlayers ? "full" : tournament.status,
-    });
-
-    setNewPlayerName("");
-    setNewPlayerPhone("");
-    toast.success("Player added successfully!");
+    setIsWorking(true);
+    try {
+      await addPlayerAsAdmin(TOURNAMENT_ID, newPlayerName.trim(), newPlayerPhone.trim());
+      setNewPlayerName("");
+      setNewPlayerPhone("");
+      toast.success("Player added successfully!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to add player");
+    } finally {
+      setIsWorking(false);
+    }
   };
 
-  const handleRemovePlayer = (id: string) => {
-    const updatedRegistrations = tournament.registrations.filter((reg) => reg.id !== id);
-    const confirmedCount = updatedRegistrations.filter((r) => r.paymentStatus === "confirmed").length;
-    
-    setTournament({
-      ...tournament,
-      registrations: updatedRegistrations,
-      currentPlayers: confirmedCount,
-      status: confirmedCount >= tournament.maxPlayers ? "full" : "open",
-    });
-
-    toast.success("Player removed successfully!");
+  const handleRemovePlayer = async (id: string) => {
+    if (!window.confirm("Remove this player from the tournament?")) return;
+    setIsWorking(true);
+    try {
+      await removePlayerAsAdmin(id);
+      toast.success("Player removed successfully!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to remove player");
+    } finally {
+      setIsWorking(false);
+    }
   };
 
-  const handleUpdateMaxPlayers = () => {
-    if (newMaxPlayers < tournament.currentPlayers) {
+  const handleConfirmPayment = async (id: string) => {
+    setIsWorking(true);
+    try {
+      await confirmPayment(id, `ADMIN-MANUAL-${Date.now()}`);
+      toast.success("Payment confirmed!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to confirm payment");
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const handleUpdateMaxPlayers = async () => {
+    if (!tournament) return;
+    if (newMaxPlayers < tournament.current_players) {
       toast.error("Cannot set max players below current registrations!");
       return;
     }
-
-    setTournament({
-      ...tournament,
-      maxPlayers: newMaxPlayers,
-      status: tournament.currentPlayers >= newMaxPlayers ? "full" : "open",
-    });
-
-    toast.success("Max players updated!");
-  };
-
-  const handleToggleStatus = () => {
-    const newStatus = tournament.status === "open" ? "closed" : "open";
-    setTournament({
-      ...tournament,
-      status: newStatus,
-    });
-    toast.success(`Tournament ${newStatus === "open" ? "opened" : "closed"}!`);
-  };
-
-  const handleResetTournament = () => {
-    if (window.confirm("Are you sure you want to reset the entire tournament? This cannot be undone!")) {
-      const resetData: TournamentData = {
-        id: "1",
-        name: "FC 26 TOURNAMENT",
-        maxPlayers: 32,
-        currentPlayers: 0,
-        status: "open",
-        registrations: [],
-      };
-      setTournament(resetData);
-      setNewMaxPlayers(32);
-      toast.success("Tournament reset successfully!");
+    setIsWorking(true);
+    try {
+      await updateTournamentSettings(TOURNAMENT_ID, { max_players: newMaxPlayers });
+      toast.success("Max players updated!");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update settings");
+    } finally {
+      setIsWorking(false);
     }
   };
 
-  const confirmedPlayers = tournament.registrations.filter((r) => r.paymentStatus === "confirmed");
-  const pendingPlayers = tournament.registrations.filter((r) => r.paymentStatus === "pending");
+  const handleToggleStatus = async () => {
+    if (!tournament) return;
+    const newStatus = tournament.status === "open" ? "closed" : "open";
+    setIsWorking(true);
+    try {
+      await updateTournamentSettings(TOURNAMENT_ID, { status: newStatus });
+      toast.success(`Tournament ${newStatus === "open" ? "opened" : "closed"}!`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update status");
+    } finally {
+      setIsWorking(false);
+    }
+  };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await logoutAdmin();
+    } catch {}
     sessionStorage.removeItem("isAdminAuthenticated");
     sessionStorage.removeItem("adminLoginTime");
     toast.success("Logged out successfully");
     navigate("/");
   };
+
+  if (!tournament) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400 text-lg">Loading admin panel...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const confirmedPlayers = registrations.filter((r) => r.payment_status === "confirmed");
+  const pendingPlayers = registrations.filter((r) => r.payment_status === "pending");
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white p-4 md:p-6">

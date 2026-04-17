@@ -6,28 +6,26 @@ interface RegistrationFormProps {
   onSubmit: (playerName: string, phoneNumber: string) => void;
   onCancel: () => void;
   currentPrice: number;
+  isLoading?: boolean;
 }
 
-export function RegistrationForm({ onSubmit, onCancel, currentPrice }: RegistrationFormProps) {
+export function RegistrationForm({ onSubmit, onCancel, currentPrice, isLoading = false }: RegistrationFormProps) {
   const [playerName, setPlayerName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [errors, setErrors] = useState<{ playerName?: string; phoneNumber?: string }>({});
 
   const validateForm = () => {
     const newErrors: { playerName?: string; phoneNumber?: string } = {};
-
     if (!playerName.trim()) {
       newErrors.playerName = "Player name is required";
     } else if (playerName.trim().length < 2) {
       newErrors.playerName = "Name must be at least 2 characters";
     }
-
     if (!phoneNumber.trim()) {
       newErrors.phoneNumber = "Phone number is required";
     } else if (!/^0\d{10}$/.test(phoneNumber.replace(/\s/g, ""))) {
       newErrors.phoneNumber = "Enter a valid 11-digit phone number (e.g., 08012345678)";
     }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };

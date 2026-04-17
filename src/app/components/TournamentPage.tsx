@@ -1,139 +1,44 @@
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { Trophy, Clock, Users, AlertTriangle, CheckCircle, Settings, Gamepad2 } from "lucide-react";
+import { motion } from "motion/react";
+import { Trophy, Clock, AlertTriangle, CheckCircle, Settings, Gamepad2 } from "lucide-react";
 import { Link } from "react-router";
 import { RegistrationForm } from "./RegistrationForm";
 import { LiveStatus } from "./LiveStatus";
 import { toast } from "sonner";
 import logoImage from "../../imports/trbg-1.png";
+import { useTournamentSubscription } from "../../hooks/useTournamentSubscription";
+import { registerPlayer } from "../../services/tournament";
 
-interface Registration {
-  id: string;
-  playerName: string;
-  phoneNumber: string;
-  paymentStatus: "pending" | "confirmed";
-  createdAt: number;
-  expiresAt: number;
-}
-
-interface TournamentData {
-  id: string;
-  name: string;
-  maxPlayers: number;
-  currentPlayers: number;
-  status: "open" | "full" | "closed";
-  registrations: Registration[];
-}
-
-const STORAGE_KEY = "tournament_data";
-const AUTO_CLEANUP_INTERVAL = 10000; // 10 seconds
-const SLOT_LOCK_DURATION = 10 * 60 * 1000; // 10 minutes
+// Set this to your actual tournament UUID from Supabase
+const TOURNAMENT_ID = import.meta.env.VITE_TOURNAMENT_ID || "1";
 
 export function TournamentPage() {
-  const [tournament, setTournament] = useState<TournamentData>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    return {
-      id: "1",
-      name: "FC 26 TOURNAMENT",
-      maxPlayers: 32,
-      currentPlayers: 0,
-      status: "open",
-      registrations: [],
-    };
-  });
-
+  const { tournament, registrations } = useTournamentSubscription(TOURNAMENT_ID);
   const [showForm, setShowForm] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(Date.now());
 
-  // Save to localStorage whenever tournament changes
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tournament));
-  }, [tournament]);
-
-  // Auto cleanup expired pending registrations
-  useEffect(() => {
-    const cleanup = () => {
-      const now = Date.now();
-      const validRegistrations = tournament.registrations.filter((reg) => {
-        if (reg.paymentStatus === "pending" && now > reg.expiresAt) {
-          toast.info("🔓 A slot was released due to payment timeout");
-          return false;
-        }
-        return true;
-      });
-
-      if (validRegistrations.length !== tournament.registrations.length) {
-        const confirmedCount = validRegistrations.filter(
-          (r) => r.paymentStatus === "confirmed"
-        ).length;
-        setTournament({
-          ...tournament,
-          registrations: validRegistrations,
-          currentPlayers: confirmedCount,
-          status: confirmedCount >= tournament.maxPlayers ? "full" : "open",
-        });
-      }
-    };
-
-    const interval = setInterval(cleanup, AUTO_CLEANUP_INTERVAL);
-    return () => clearInterval(interval);
-  }, [tournament]);
-
-  // Update last update timestamp every 5 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setLastUpdate(Date.now());
-    }, 5000);
-
+    const interval = setInterval(() => setLastUpdate(Date.now()), 5000);
     return () => clearInterval(interval);
   }, []);
 
-  const handleRegistration = (playerName: string, phoneNumber: string) => {
-    if (tournament.currentPlayers >= tournament.maxPlayers) {
+  const handleRegistration = async (playerName: string, phoneNumber: string) => {
+    if (!tournament) return;
+    if (tournament.current_players >= tournament.max_players) {
       toast.error("Tournament is full!");
       return;
     }
-
-    const now = Date.now();
-    const newReg: Registration = {
-      id: `${Date.now()}`,
-      playerName,
-      phoneNumber,
-      paymentStatus: "pending",
-      createdAt: now,
-      expiresAt: now + SLOT_LOCK_DURATION,
-    };
-
-    // Increment confirmed players immediately
-    const newCurrentPlayers = tournament.currentPlayers + 1;
-    const newStatus = newCurrentPlayers >= tournament.maxPlayers ? "full" : "open";
-
-    setTournament({
-      ...tournament,
-      registrations: [...tournament.registrations, newReg],
-      currentPlayers: newCurrentPlayers,
-      status: newStatus,
-    });
-
-    toast.success("🎉 Slot reserved! Complete payment within 10 minutes.", {
-      duration: 5000,
-    });
-
-    // Simulate payment confirmation after 2-5 seconds
-    setTimeout(() => {
-      setTournament((prev) => ({
-        ...prev,
-        registrations: prev.registrations.map((reg) =>
-          reg.id === newReg.id ? { ...reg, paymentStatus: "confirmed" } : reg
-        ),
-      }));
-      toast.success("✅ Payment confirmed!");
-    }, Math.random() * 3000 + 2000);
-
-    setShowForm(false);
+    setIsLoading(true);
+    try {
+      await registerPlayer(TOURNAMENT_ID, playerName, phoneNumber);
+      toast.success("🎉 Slot reserved! Complete payment within 10 minutes.", { duration: 5000 });
+      setShowForm(false);
+    } catch (err: any) {
+      toast.error(err.message || "Registration failed. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const getPrice = (count: number) => {
@@ -142,37 +47,43 @@ export function TournamentPage() {
     return 2500;
   };
 
-  const slotsLeft = tournament.maxPlayers - tournament.currentPlayers;
-  const currentPrice = getPrice(tournament.currentPlayers);
+  if (!tournament) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400 text-lg">Loading tournament...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const slotsLeft = tournament.max_players - tournament.current_players;
+  const currentPrice = getPrice(tournament.current_players);
 
   if (tournament.status === "full") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white flex items-center justify-center p-4">
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="text-center max-w-2xl"
-        >
+        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="text-center max-w-2xl">
           <div className="text-8xl mb-6">🚫</div>
-          <h1 className="text-5xl md:text-7xl font-bold mb-4 bg-gradient-to-r from-red-400 to-red-600 bg-clip-text text-transparent">
-            TOURNAMENT FULL
-          </h1>
-          <p className="text-xl md:text-2xl text-slate-400 mb-8">
-            All {tournament.maxPlayers} slots have been filled. You missed this one!
-          </p>
-          <button
-            onClick={() => toast.info("Waitlist feature coming soon!")}
-            className="px-8 py-4 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg text-xl font-semibold hover:from-orange-600 hover:to-red-600 transition-all shadow-lg hover:shadow-orange-500/50"
-          >
-            Join Waitlist
-          </button>
-          <Link
-            to="/admin"
-            className="ml-4 inline-block px-6 py-4 bg-slate-800 rounded-lg hover:bg-slate-700 transition-all border border-slate-700"
-          >
-            <Settings className="inline mr-2" size={20} />
-            Admin Panel
+          <h1 className="text-5xl md:text-7xl font-bold mb-4 bg-gradient-to-r from-red-400 to-red-600 bg-clip-text text-transparent">TOURNAMENT FULL</h1>
+          <p className="text-xl md:text-2xl text-slate-400 mb-8">All {tournament.max_players} slots have been filled. You missed this one!</p>
+          <button onClick={() => toast.info("Waitlist feature coming soon!")} className="px-8 py-4 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg text-xl font-semibold hover:from-orange-600 hover:to-red-600 transition-all shadow-lg hover:shadow-orange-500/50">Join Waitlist</button>
+          <Link to="/admin" className="ml-4 inline-block px-6 py-4 bg-slate-800 rounded-lg hover:bg-slate-700 transition-all border border-slate-700">
+            <Settings className="inline mr-2" size={20} />Admin Panel
           </Link>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (tournament.status === "closed") {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white flex items-center justify-center p-4">
+        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="text-center max-w-2xl">
+          <div className="text-8xl mb-6">🔒</div>
+          <h1 className="text-5xl md:text-7xl font-bold mb-4 bg-gradient-to-r from-slate-400 to-slate-600 bg-clip-text text-transparent">REGISTRATION CLOSED</h1>
+          <p className="text-xl md:text-2xl text-slate-400 mb-8">Registration for this tournament is currently closed.</p>
         </motion.div>
       </div>
     );
