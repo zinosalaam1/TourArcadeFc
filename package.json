@@ -6,7 +6,7 @@
   "scripts": {
     "build": "vite build && npm run optimize-images",
     "dev": "vite",
-    "optimize-images": "imagemin src/imports/*.{jpg,png} --out-dir=src/imports/optimized",
+    "optimize-images": "imagemin src/imports/*.{jpg,png} --out-dir=src/imports/optimized"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
