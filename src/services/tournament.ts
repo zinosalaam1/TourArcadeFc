@@ -17,54 +17,47 @@ export async function getTournamentStatus(tournamentId: string) {
 // ================================================
 // REGISTER PLAYER
 // ================================================
-export async function registerPlayer(
-  tournamentId: string,
-  playerName: string,
-  phoneNumber: string
-) {
-  // 1. Check if tournament is open and has slots
-  const { data: tournament } = await supabase
+export async function registerPlayer(tournamentId: string, playerName: string, phoneNumber: string) {
+  // 1. Check tournament state
+  const { data: tournament, error: tErr } = await supabase
     .from('tournaments')
     .select('*')
     .eq('id', tournamentId)
     .single();
 
-  if (!tournament || tournament.current_players >= tournament.max_players) {
-    throw new Error('Tournament is full');
-  }
+  if (tErr) throw new Error('Could not load tournament. Check your Supabase connection.');
+  if (!tournament) throw new Error('Tournament not found. Check VITE_TOURNAMENT_ID.');
+  if (tournament.status !== 'open') throw new Error('Tournament registration is closed.');
+  if (tournament.current_players >= tournament.max_players) throw new Error('Tournament is full.');
 
-  if (tournament.status !== 'open') {
-    throw new Error('Tournament registration is closed');
-  }
-
-  // 2. Calculate price based on current registrations
+  // 2. Calculate price
   const price = getPrice(tournament.current_players);
 
-  // 3. Create registration (expires in 10 minutes)
-  const expiresAt = new Date();
-  expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+  // 3. Insert registration
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-  const { data: registration, error } = await supabase
+  const { data: registration, error: rErr } = await supabase
     .from('registrations')
     .insert({
       tournament_id: tournamentId,
       player_name: playerName,
       phone_number: phoneNumber,
       payment_status: 'pending',
-      expires_at: expiresAt.toISOString(),
+      expires_at: expiresAt,
       amount: price,
     })
     .select()
     .single();
 
-  if (error) throw error;
+  if (rErr) throw rErr;
 
-  // 4. Increment tournament player count
+  // 4. Update tournament player count
+  const newCount = tournament.current_players + 1;
   await supabase
     .from('tournaments')
     .update({
-      current_players: tournament.current_players + 1,
-      status: tournament.current_players + 1 >= tournament.max_players ? 'full' : 'open',
+      current_players: newCount,
+      status: newCount >= tournament.max_players ? 'full' : 'open',
     })
     .eq('id', tournamentId);
 
@@ -91,54 +84,29 @@ export async function getRegistrations(tournamentId: string) {
 export async function confirmPayment(registrationId: string, paymentReference: string) {
   const { error } = await supabase
     .from('registrations')
-    .update({
-      payment_status: 'confirmed',
-      payment_reference: paymentReference,
-    })
+    .update({ payment_status: 'confirmed', payment_reference: paymentReference })
     .eq('id', registrationId);
 
   if (error) throw error;
-}
 
-// ================================================
-// CLEANUP EXPIRED REGISTRATIONS (Run via cron or Edge Function)
-// ================================================
-export async function cleanupExpiredRegistrations() {
-  const now = new Date().toISOString();
+  // Also update tournament current_players to reflect confirmed count
+  const { data: reg } = await supabase.from('registrations').select('tournament_id').eq('id', registrationId).single();
+  if (reg) {
+    const { count } = await supabase
+      .from('registrations')
+      .select('*', { count: 'exact', head: true })
+      .eq('tournament_id', reg.tournament_id)
+      .eq('payment_status', 'confirmed');
 
-  // Get expired pending registrations
-  const { data: expired } = await supabase
-    .from('registrations')
-    .select('tournament_id')
-    .eq('payment_status', 'pending')
-    .lt('expires_at', now);
-
-  // Delete expired registrations
-  await supabase
-    .from('registrations')
-    .delete()
-    .eq('payment_status', 'pending')
-    .lt('expires_at', now);
-
-  // Update tournament counts
-  if (expired && expired.length > 0) {
-    for (const reg of expired) {
-      const { data: tournament } = await supabase
-        .from('tournaments')
-        .select('current_players, max_players')
-        .eq('id', reg.tournament_id)
-        .single();
-
-      if (tournament) {
-        await supabase
-          .from('tournaments')
-          .update({
-            current_players: Math.max(0, tournament.current_players - 1),
-            status: tournament.current_players - 1 < tournament.max_players ? 'open' : 'full',
-          })
-          .eq('id', reg.tournament_id);
-      }
-    }
+    const { data: tournament } = await supabase.from('tournaments').select('max_players').eq('id', reg.tournament_id).single();
+    const confirmedCount = count ?? 0;
+    await supabase
+      .from('tournaments')
+      .update({
+        current_players: confirmedCount,
+        status: confirmedCount >= (tournament?.max_players ?? 32) ? 'full' : 'open',
+      })
+      .eq('id', reg.tournament_id);
   }
 }
 
