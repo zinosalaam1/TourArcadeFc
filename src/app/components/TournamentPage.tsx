@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import logoImage from "../../imports/trbg-1.png";
 import { useTournamentSubscription } from "../../hooks/useTournamentSubscription";
 import { registerPlayer } from "../../services/tournament";
+import { initiatePaystackPayment, confirmPaymentInDB } from "../../services/payment";
 
 const TOURNAMENT_ID = import.meta.env.VITE_TOURNAMENT_ID;
 
@@ -26,16 +27,42 @@ export function TournamentPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleRegistration = async (playerName: string, phoneNumber: string) => {
+  const handleRegistration = async (playerName: string, phoneNumber: string, email: string) => {
     if (!tournament) return;
     setIsLoading(true);
+
     try {
-      await registerPlayer(TOURNAMENT_ID, playerName, phoneNumber);
-      toast.success("🎉 Slot reserved! Complete payment within 10 minutes.", { duration: 5000 });
-      setShowForm(false);
+      // Step 1: Create the registration in Supabase (status = pending)
+      const registration = await registerPlayer(TOURNAMENT_ID, playerName, phoneNumber);
+
+      // Step 2: Open Paystack payment popup
+      initiatePaystackPayment({
+        email,
+        amount: registration.amount,
+        registrationId: registration.id,
+        playerName,
+        onSuccess: async (reference) => {
+          try {
+            // Step 3: On payment success, confirm in DB
+            await confirmPaymentInDB(registration.id, reference);
+            toast.success("✅ Payment confirmed! You're in the tournament!", { duration: 6000 });
+            setShowForm(false);
+          } catch (err: any) {
+            // Payment went through but DB update failed - show manual ref
+            toast.error(`Payment received but confirmation failed. Save this reference: ${reference}`, { duration: 10000 });
+          }
+        },
+        onClose: () => {
+          // User closed Paystack without paying - slot stays pending for 10 min
+          toast.warning("⚠️ Payment not completed. Your slot is reserved for 10 minutes.", { duration: 5000 });
+          setShowForm(false);
+          setIsLoading(false);
+        },
+      });
+
+      // Don't set isLoading false here — Paystack popup is open
     } catch (err: any) {
       toast.error(err.message || "Registration failed. Please try again.");
-    } finally {
       setIsLoading(false);
     }
   };
@@ -46,28 +73,28 @@ export function TournamentPage() {
     return 2500;
   };
 
-  // No TOURNAMENT_ID set
+  // Missing env var
   if (!TOURNAMENT_ID) {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
         <div className="text-center max-w-lg bg-red-900/20 border border-red-500/50 rounded-2xl p-8">
           <div className="text-5xl mb-4">⚠️</div>
           <h2 className="text-2xl font-bold text-red-400 mb-3">VITE_TOURNAMENT_ID not set</h2>
-          <p className="text-slate-400 text-sm">Add <code className="bg-slate-800 px-2 py-1 rounded text-yellow-300">VITE_TOURNAMENT_ID=your-uuid</code> to your <code className="bg-slate-800 px-2 py-1 rounded text-yellow-300">.env</code> file, then restart the dev server.</p>
+          <p className="text-slate-400 text-sm">Add <code className="bg-slate-800 px-2 py-1 rounded text-yellow-300">VITE_TOURNAMENT_ID=your-uuid</code> to your <code className="bg-slate-800 px-2 py-1 rounded text-yellow-300">.env</code> file and redeploy.</p>
         </div>
       </div>
     );
   }
 
-  // Supabase connection error
+  // Supabase error
   if (error) {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
         <div className="text-center max-w-lg bg-red-900/20 border border-red-500/50 rounded-2xl p-8">
           <WifiOff className="mx-auto mb-4 text-red-400" size={48} />
           <h2 className="text-2xl font-bold text-red-400 mb-3">Connection Error</h2>
-          <p className="text-slate-400 text-sm mb-4">{error}</p>
-          <p className="text-slate-500 text-xs">Check your VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env</p>
+          <p className="text-slate-400 text-sm mb-2">{error}</p>
+          <p className="text-slate-500 text-xs">Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY</p>
         </div>
       </div>
     );
@@ -95,8 +122,7 @@ export function TournamentPage() {
           <div className="text-8xl mb-6">🚫</div>
           <h1 className="text-5xl md:text-7xl font-bold mb-4 bg-gradient-to-r from-red-400 to-red-600 bg-clip-text text-transparent">TOURNAMENT FULL</h1>
           <p className="text-xl md:text-2xl text-slate-400 mb-8">All {tournament.max_players} slots have been filled!</p>
-          <button onClick={() => toast.info("Waitlist feature coming soon!")} className="px-8 py-4 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg text-xl font-semibold hover:from-orange-600 hover:to-red-600 transition-all shadow-lg">Join Waitlist</button>
-          <Link to="/admin" className="ml-4 inline-block px-6 py-4 bg-slate-800 rounded-lg hover:bg-slate-700 transition-all border border-slate-700"><Settings className="inline mr-2" size={20} />Admin Panel</Link>
+          <Link to="/admin" className="inline-block px-6 py-4 bg-slate-800 rounded-lg hover:bg-slate-700 transition-all border border-slate-700"><Settings className="inline mr-2" size={20} />Admin Panel</Link>
         </motion.div>
       </div>
     );
@@ -108,7 +134,7 @@ export function TournamentPage() {
         <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="text-center max-w-2xl">
           <div className="text-8xl mb-6">🔒</div>
           <h1 className="text-5xl md:text-7xl font-bold mb-4 bg-gradient-to-r from-slate-400 to-slate-600 bg-clip-text text-transparent">REGISTRATION CLOSED</h1>
-          <p className="text-xl md:text-2xl text-slate-400">Registration for this tournament is currently closed.</p>
+          <p className="text-xl md:text-2xl text-slate-400">Registration is currently closed.</p>
         </motion.div>
       </div>
     );
@@ -116,6 +142,7 @@ export function TournamentPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white">
+      {/* Hero */}
       <div className="relative overflow-hidden bg-gradient-to-b from-slate-900 to-slate-950 border-b border-slate-800">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-900/20 via-transparent to-transparent" />
         <div className="relative z-10 container mx-auto px-4 py-12 md:py-16">
@@ -145,40 +172,63 @@ export function TournamentPage() {
         </div>
       </div>
 
+      {/* Main Content */}
       <div className="container mx-auto px-4 py-8 md:py-12">
         <div className="grid lg:grid-cols-2 gap-6 md:gap-8 max-w-7xl mx-auto">
-          <LiveStatus currentPlayers={tournament.current_players} maxPlayers={tournament.max_players} slotsLeft={slotsLeft} currentPrice={currentPrice} lastUpdate={lastUpdate} />
+          <LiveStatus
+            currentPlayers={tournament.current_players}
+            maxPlayers={tournament.max_players}
+            slotsLeft={slotsLeft}
+            currentPrice={currentPrice}
+            lastUpdate={lastUpdate}
+          />
+
           <motion.div initial={{ x: 50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.3 }} className="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-6 md:p-8 border border-slate-800 shadow-2xl">
-            <h2 className="text-2xl md:text-3xl font-bold mb-6 flex items-center gap-3"><CheckCircle className="text-green-400" />Secure Your Slot</h2>
+            <h2 className="text-2xl md:text-3xl font-bold mb-6 flex items-center gap-3">
+              <CheckCircle className="text-green-400" />Secure Your Slot
+            </h2>
+
             {!showForm ? (
               <div className="space-y-6">
-                <div className="bg-slate-950/50 rounded-xl p-5 md:p-6 border border-slate-800">
+                <div className="bg-slate-950/50 rounded-xl p-5 border border-slate-800">
                   <div className="flex items-start gap-4">
                     <AlertTriangle className="text-yellow-400 flex-shrink-0 mt-1" size={24} />
                     <div>
                       <h3 className="font-semibold text-lg mb-2">⚡ Scarcity Alert</h3>
-                      <p className="text-slate-400 text-sm md:text-base">Slots are filling fast! Price increases as more players register.</p>
+                      <p className="text-slate-400 text-sm">Slots are filling fast! Price increases as more players register.</p>
                     </div>
                   </div>
                 </div>
-                <div className="bg-gradient-to-r from-orange-500/10 to-red-500/10 rounded-xl p-5 md:p-6 border border-orange-500/30">
+
+                <div className="bg-gradient-to-r from-orange-500/10 to-red-500/10 rounded-xl p-5 border border-orange-500/30">
                   <div className="flex items-center gap-3 mb-3">
                     <Clock className="text-orange-400" size={24} />
                     <h3 className="font-semibold text-lg">10-Minute Payment Window</h3>
                   </div>
-                  <p className="text-sm text-slate-300">Once you register, you'll have 10 minutes to complete payment or your slot will be released.</p>
+                  <p className="text-sm text-slate-300">Register → pay via Paystack → slot confirmed. Unpaid slots are released after 10 minutes.</p>
                 </div>
-                <button onClick={() => setShowForm(true)} disabled={slotsLeft === 0} className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl text-lg md:text-xl font-bold hover:from-green-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-green-500/50">
-                  {slotsLeft === 0 ? "No Slots Available" : "Register Now"}
+
+                <button
+                  onClick={() => setShowForm(true)}
+                  disabled={slotsLeft === 0}
+                  className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl text-lg md:text-xl font-bold hover:from-green-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-green-500/50"
+                >
+                  {slotsLeft === 0 ? "No Slots Available" : `Register Now — ₦${currentPrice.toLocaleString()}`}
                 </button>
               </div>
             ) : (
-              <RegistrationForm onSubmit={handleRegistration} onCancel={() => setShowForm(false)} currentPrice={currentPrice} isLoading={isLoading} />
+              <RegistrationForm
+                onSubmit={handleRegistration}
+                onCancel={() => { setShowForm(false); setIsLoading(false); }}
+                currentPrice={currentPrice}
+                isLoading={isLoading}
+              />
             )}
           </motion.div>
         </div>
       </div>
 
+      {/* Admin Button */}
       <div className="fixed bottom-6 right-6 z-50">
         <Link to="/admin" className="block p-4 bg-slate-900 rounded-full hover:bg-slate-800 transition-all shadow-lg border border-slate-700 hover:border-slate-600 group" title="Admin Panel">
           <Gamepad2 size={24} className="text-slate-400 group-hover:text-white transition-colors" />
