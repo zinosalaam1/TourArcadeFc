@@ -4,7 +4,7 @@ import { Lock, Eye, EyeOff, AlertCircle, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
-const ADMIN_PASSWORD = "tourarcade2026"; 
+const ADMIN_PASSWORD = "tourarcade2027"; 
 
 export function AdminLogin() {
   const [password, setPassword] = useState("");
@@ -52,8 +52,8 @@ export function AdminLogin() {
         <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-start gap-3">
           <AlertCircle className="text-amber-400 flex-shrink-0 mt-0.5" size={20} />
           <div className="text-sm text-amber-200">
-            <strong className="font-semibold">Demo Mode:</strong> This is basic password protection. 
-            For production, integrate Supabase Auth (see docs).
+            <strong className="font-semibold">Demo Mode:</strong>For Admin's only
+            Goodluck
           </div>
         </div>
 
@@ -96,8 +96,8 @@ export function AdminLogin() {
 
         {/* Help Text */}
         <div className="mt-6 text-center text-sm text-slate-500">
-          <p>Default password: <code className="px-2 py-1 bg-slate-800 rounded text-slate-300">tourarcade2026</code></p>
-          <p className="mt-2">Change this in <code className="text-slate-400">/src/app/components/AdminLogin.tsx</code></p>
+          <p>Gunners<code className="px-2 py-1 bg-slate-800 rounded text-slate-300">For Life</code></p>
+          <p className="mt-2">Change password <code className="text-slate-400">at senate building</code></p>
         </div>
 
         {/* Back Link */}
