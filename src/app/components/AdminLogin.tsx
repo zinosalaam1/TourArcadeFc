@@ -52,7 +52,7 @@ export function AdminLogin() {
         <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-start gap-3">
           <AlertCircle className="text-amber-400 flex-shrink-0 mt-0.5" size={20} />
           <div className="text-sm text-amber-200">
-            <strong className="font-semibold">Demo Mode:</strong>For Admin's only
+            <strong className="font-semibold">Strictly</strong>For Admin's only
             Goodluck
           </div>
         </div>
