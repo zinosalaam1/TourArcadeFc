@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { motion } from "motion/react";
-import { Trophy, Clock, AlertTriangle, CheckCircle, Settings, Gamepad2, WifiOff } from "lucide-react";
+import { Trophy, Clock, AlertTriangle, CheckCircle, Gamepad2, WifiOff } from "lucide-react";
 import { Link } from "react-router";
 import { RegistrationForm } from "./RegistrationForm";
+import { TransferInstructions } from "./TransferInstructions";
 import { LiveStatus } from "./LiveStatus";
 import { toast } from "sonner";
 import logoImage from "../../imports/trbg-1.png";
@@ -12,9 +13,14 @@ import { initiatePaystackPayment, confirmPaymentInDB } from "../../services/paym
 
 const TOURNAMENT_ID = import.meta.env.VITE_TOURNAMENT_ID;
 
+type PageState =
+  | { view: "home" }
+  | { view: "form" }
+  | { view: "transfer"; playerName: string; amount: number; expiresAt: string };
+
 export function TournamentPage() {
-  const { tournament, registrations, error } = useTournamentSubscription(TOURNAMENT_ID);
-  const [showForm, setShowForm] = useState(false);
+  const { tournament, error } = useTournamentSubscription(TOURNAMENT_ID);
+  const [pageState, setPageState] = useState<PageState>({ view: "home" });
   const [isLoading, setIsLoading] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(Date.now());
 
@@ -27,40 +33,51 @@ export function TournamentPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleRegistration = async (playerName: string, phoneNumber: string, email: string) => {
+  const handleRegistration = async (
+    playerName: string,
+    phoneNumber: string,
+    email: string,
+    paymentMethod: "paystack" | "transfer"
+  ) => {
     if (!tournament) return;
     setIsLoading(true);
 
     try {
-      // Step 1: Create the registration in Supabase (status = pending)
       const registration = await registerPlayer(TOURNAMENT_ID, playerName, phoneNumber);
 
-      // Step 2: Open Paystack payment popup
-      initiatePaystackPayment({
-        email,
-        amount: registration.amount,
-        registrationId: registration.id,
-        playerName,
-        onSuccess: async (reference) => {
-          try {
-            // Step 3: On payment success, confirm in DB
-            await confirmPaymentInDB(registration.id, reference);
-            toast.success("✅ Payment confirmed! You're in the tournament!", { duration: 6000 });
-            setShowForm(false);
-          } catch (err: any) {
-            // Payment went through but DB update failed - show manual ref
-            toast.error(`Payment received but confirmation failed. Save this reference: ${reference}`, { duration: 10000 });
-          }
-        },
-        onClose: () => {
-          // User closed Paystack without paying - slot stays pending for 10 min
-          toast.warning("⚠️ Payment not completed. Your slot is reserved for 10 minutes.", { duration: 5000 });
-          setShowForm(false);
-          setIsLoading(false);
-        },
-      });
-
-      // Don't set isLoading false here — Paystack popup is open
+      if (paymentMethod === "transfer") {
+        // Show transfer instructions — admin confirms manually
+        setPageState({
+          view: "transfer",
+          playerName,
+          amount: registration.amount,
+          expiresAt: registration.expires_at,
+        });
+        setIsLoading(false);
+      } else {
+        // Open Paystack popup
+        initiatePaystackPayment({
+          email,
+          amount: registration.amount,
+          registrationId: registration.id,
+          playerName,
+          onSuccess: async (reference) => {
+            try {
+              await confirmPaymentInDB(registration.id, reference);
+              toast.success("✅ Payment confirmed! You're in the tournament!", { duration: 6000 });
+              setPageState({ view: "home" });
+            } catch (err: any) {
+              toast.error(`Payment received but confirmation failed. Save this reference: ${reference}`, { duration: 10000 });
+            }
+            setIsLoading(false);
+          },
+          onClose: () => {
+            toast.warning("⚠️ Payment not completed. Your slot is reserved for 10 minutes.", { duration: 5000 });
+            setPageState({ view: "home" });
+            setIsLoading(false);
+          },
+        });
+      }
     } catch (err: any) {
       toast.error(err.message || "Registration failed. Please try again.");
       setIsLoading(false);
@@ -73,7 +90,6 @@ export function TournamentPage() {
     return 2500;
   };
 
-  // Missing env var
   if (!TOURNAMENT_ID) {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
@@ -86,7 +102,6 @@ export function TournamentPage() {
     );
   }
 
-  // Supabase error
   if (error) {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
@@ -100,7 +115,6 @@ export function TournamentPage() {
     );
   }
 
-  // Loading
   if (!tournament) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white flex items-center justify-center">
@@ -122,7 +136,6 @@ export function TournamentPage() {
           <div className="text-8xl mb-6">🚫</div>
           <h1 className="text-5xl md:text-7xl font-bold mb-4 bg-gradient-to-r from-red-400 to-red-600 bg-clip-text text-transparent">TOURNAMENT FULL</h1>
           <p className="text-xl md:text-2xl text-slate-400 mb-8">All {tournament.max_players} slots have been filled!</p>
-          <Link to="/admin" className="inline-block px-6 py-4 bg-slate-800 rounded-lg hover:bg-slate-700 transition-all border border-slate-700"><Settings className="inline mr-2" size={20} />Admin Panel</Link>
         </motion.div>
       </div>
     );
@@ -172,63 +185,60 @@ export function TournamentPage() {
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="container mx-auto px-4 py-8 md:py-12">
         <div className="grid lg:grid-cols-2 gap-6 md:gap-8 max-w-7xl mx-auto">
-          <LiveStatus
-            currentPlayers={tournament.current_players}
-            maxPlayers={tournament.max_players}
-            slotsLeft={slotsLeft}
-            currentPrice={currentPrice}
-            lastUpdate={lastUpdate}
-          />
+          <LiveStatus currentPlayers={tournament.current_players} maxPlayers={tournament.max_players} slotsLeft={slotsLeft} currentPrice={currentPrice} lastUpdate={lastUpdate} />
 
           <motion.div initial={{ x: 50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.3 }} className="bg-slate-900/50 backdrop-blur-sm rounded-2xl p-6 md:p-8 border border-slate-800 shadow-2xl">
-            <h2 className="text-2xl md:text-3xl font-bold mb-6 flex items-center gap-3">
-              <CheckCircle className="text-green-400" />Secure Your Slot
-            </h2>
 
-            {!showForm ? (
-              <div className="space-y-6">
-                <div className="bg-slate-950/50 rounded-xl p-5 border border-slate-800">
-                  <div className="flex items-start gap-4">
-                    <AlertTriangle className="text-yellow-400 flex-shrink-0 mt-1" size={24} />
-                    <div>
-                      <h3 className="font-semibold text-lg mb-2">⚡ Scarcity Alert</h3>
-                      <p className="text-slate-400 text-sm">Slots are filling fast! Price increases as more players register.</p>
+            {pageState.view === "home" && (
+              <>
+                <h2 className="text-2xl md:text-3xl font-bold mb-6 flex items-center gap-3"><CheckCircle className="text-green-400" />Secure Your Slot</h2>
+                <div className="space-y-6">
+                  <div className="bg-slate-950/50 rounded-xl p-5 border border-slate-800">
+                    <div className="flex items-start gap-4">
+                      <AlertTriangle className="text-yellow-400 flex-shrink-0 mt-1" size={24} />
+                      <div>
+                        <h3 className="font-semibold text-lg mb-2">⚡ Scarcity Alert</h3>
+                        <p className="text-slate-400 text-sm">Slots are filling fast! Price increases as more players register.</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-
-                <div className="bg-gradient-to-r from-orange-500/10 to-red-500/10 rounded-xl p-5 border border-orange-500/30">
-                  <div className="flex items-center gap-3 mb-3">
-                    <Clock className="text-orange-400" size={24} />
-                    <h3 className="font-semibold text-lg">10-Minute Payment Window</h3>
+                  <div className="bg-gradient-to-r from-orange-500/10 to-red-500/10 rounded-xl p-5 border border-orange-500/30">
+                    <div className="flex items-center gap-3 mb-3">
+                      <Clock className="text-orange-400" size={24} />
+                      <h3 className="font-semibold text-lg">10-Minute Payment Window</h3>
+                    </div>
+                    <p className="text-sm text-slate-300">Register → pay via transfer or Paystack → slot confirmed. Unpaid slots are released after 10 minutes.</p>
                   </div>
-                  <p className="text-sm text-slate-300">Register → pay via Paystack → slot confirmed. Unpaid slots are released after 10 minutes.</p>
+                  <button onClick={() => setPageState({ view: "form" })} disabled={slotsLeft === 0} className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl text-lg md:text-xl font-bold hover:from-green-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-green-500/50">
+                    {slotsLeft === 0 ? "No Slots Available" : `Register Now — ₦${currentPrice.toLocaleString()}`}
+                  </button>
                 </div>
+              </>
+            )}
 
-                <button
-                  onClick={() => setShowForm(true)}
-                  disabled={slotsLeft === 0}
-                  className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl text-lg md:text-xl font-bold hover:from-green-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-green-500/50"
-                >
-                  {slotsLeft === 0 ? "No Slots Available" : `Register Now — ₦${currentPrice.toLocaleString()}`}
-                </button>
-              </div>
-            ) : (
+            {pageState.view === "form" && (
               <RegistrationForm
                 onSubmit={handleRegistration}
-                onCancel={() => { setShowForm(false); setIsLoading(false); }}
+                onCancel={() => { setPageState({ view: "home" }); setIsLoading(false); }}
                 currentPrice={currentPrice}
                 isLoading={isLoading}
+              />
+            )}
+
+            {pageState.view === "transfer" && (
+              <TransferInstructions
+                playerName={pageState.playerName}
+                amount={pageState.amount}
+                expiresAt={pageState.expiresAt}
+                onDone={() => setPageState({ view: "home" })}
               />
             )}
           </motion.div>
         </div>
       </div>
 
-      {/* Admin Button */}
       <div className="fixed bottom-6 right-6 z-50">
         <Link to="/admin" className="block p-4 bg-slate-900 rounded-full hover:bg-slate-800 transition-all shadow-lg border border-slate-700 hover:border-slate-600 group" title="Admin Panel">
           <Gamepad2 size={24} className="text-slate-400 group-hover:text-white transition-colors" />
