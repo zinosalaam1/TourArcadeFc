@@ -4,7 +4,7 @@ import { Lock, Eye, EyeOff, AlertCircle, ShieldCheck } from "lucide-react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 
-const ADMIN_PASSWORD = "tourarcade2027"; 
+const ADMIN_PASSWORD = "serifat2"; 
 
 export function AdminLogin() {
   const [password, setPassword] = useState("");
